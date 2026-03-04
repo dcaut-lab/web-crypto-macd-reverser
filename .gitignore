@@ -1,0 +1,27 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Editors / IDE
+.vscode/
+.idea/
+
+# OS / temp files
+Thumbs.db
+*.swp
+*.swo
+*~
+.cache/
+
+# Test / tooling artifacts
+.nyc_output/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*

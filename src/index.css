@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer base {
+  body {
+    @apply bg-[#0b0e11] text-[#eaecef] font-sans;
+  }
+}
+
+.chart-container svg {
+  @apply block w-full h-full;
+}
+
+.candlestick.up {
+  @apply fill-[#00b07b] stroke-[#00b07b];
+}
+
+.candlestick.down {
+  @apply fill-[#ff3b30] stroke-[#ff3b30];
+}
+
+.macd-hist.up {
+  @apply fill-[#00b07b]/80;
+}
+
+.macd-hist.down {
+  @apply fill-[#ff3b30]/80;
+}
+
+.macd-dif {
+  @apply stroke-[#2962ff] fill-none stroke-[1.5];
+}
+
+.macd-dea {
+  @apply stroke-[#ff9800] fill-none stroke-[1.5];
+}

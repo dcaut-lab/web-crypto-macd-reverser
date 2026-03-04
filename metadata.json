@@ -1,0 +1,5 @@
+{
+  "name": "Crypto MACD Reverser",
+  "description": "Weekly candlestick chart with interactive MACD slider to back-calculate closing prices.",
+  "requestFramePermissions": []
+}
