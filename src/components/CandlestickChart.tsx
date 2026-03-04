@@ -84,18 +84,23 @@ const CandlestickChart: React.FC<Props> = ({ data, width, height }) => {
       .attr('x2', (d: ChartData) => (x(d.time.toString()) || 0) + x.bandwidth() / 2)
       .attr('y1', (d: ChartData) => yPrice(d.high))
       .attr('y2', (d: ChartData) => yPrice(d.low))
-      .attr('stroke', (d: ChartData) => d.close >= d.open ? '#00b07b' : '#ff3b30');
+      .attr('stroke', (d: ChartData) => d.isEvolution ? '#a78bfa' : (d.close >= d.open ? '#00b07b' : '#ff3b30'))
+      .attr('stroke-dasharray', (d: ChartData) => d.isEvolution ? '2,2' : 'none');
 
     candles.append('rect')
       .attr('x', (d: ChartData) => x(d.time.toString()) || 0)
       .attr('y', (d: ChartData) => yPrice(Math.max(d.open, d.close)))
       .attr('width', x.bandwidth())
       .attr('height', (d: ChartData) => Math.max(1, Math.abs(yPrice(d.open) - yPrice(d.close))))
-      .attr('fill', (d: ChartData) => d.isNext ? 'none' : (d.close >= d.open ? '#00b07b' : '#ff3b30'))
-      .attr('stroke', (d: ChartData) => d.isNext ? (d.close >= d.open ? '#00b07b' : '#ff3b30') : 'none')
-      .attr('stroke-width', (d: ChartData) => d.isNext ? 1.5 : 0)
-      .attr('stroke-dasharray', (d: ChartData) => d.isNext ? '4,2' : 'none')
-      .attr('opacity', (d: ChartData) => d.isNext ? 0.5 : (d.isSimulated ? 0.6 : 1));
+      .attr('fill', (d: ChartData) => (d.isNext || d.isEvolution) ? 'none' : (d.close >= d.open ? '#00b07b' : '#ff3b30'))
+      .attr('stroke', (d: ChartData) => {
+        if (d.isEvolution) return '#a78bfa';
+        if (d.isNext) return d.close >= d.open ? '#00b07b' : '#ff3b30';
+        return 'none';
+      })
+      .attr('stroke-width', (d: ChartData) => (d.isNext || d.isEvolution) ? 1.5 : 0)
+      .attr('stroke-dasharray', (d: ChartData) => d.isEvolution ? '2,2' : d.isNext ? '4,2' : 'none')
+      .attr('opacity', (d: ChartData) => d.isEvolution ? 0.4 : d.isNext ? 0.5 : (d.isSimulated ? 0.6 : 1));
 
     // MACD Histogram
     g.selectAll<SVGRectElement, ChartData>('.macd-bar')
@@ -195,7 +200,7 @@ const CandlestickChart: React.FC<Props> = ({ data, width, height }) => {
         const dateStr = `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
         
         let tooltipHtml = `
-          <div style="color: #848e9c; margin-bottom: 4px;">${dateStr}${d.isNext ? ' <span style="color:#f0b90b">[预测]</span>' : ''}</div>
+          <div style="color: #848e9c; margin-bottom: 4px;">${dateStr}${d.isNext ? ' <span style="color:#38bdf8">[预测K]</span>' : ''}${d.isEvolution ? ' <span style="color:#a78bfa">[演化K]</span>' : ''}</div>
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
             <div>O: <span style="color: #fff">${d.open.toFixed(2)}</span></div>
             <div>H: <span style="color: #fff">${d.high.toFixed(2)}</span></div>

@@ -48,6 +48,7 @@ export default function App() {
 
   const [simulatedPercent, setSimulatedPercent] = useState(0);
   const [nextSimulatedPercent, setNextSimulatedPercent] = useState(0);
+  const [evolutionSimulatedPercent, setEvolutionSimulatedPercent] = useState(0);
   const configError = useMemo(() => validateMacdConfig(macdConfig), [macdConfig]);
 
   // Fetch data
@@ -104,6 +105,7 @@ export default function App() {
   useEffect(() => {
     setSimulatedPercent(0);
     setNextSimulatedPercent(0);
+    setEvolutionSimulatedPercent(0);
   }, [baseHist]);
 
   // Process data with MACD
@@ -174,7 +176,7 @@ export default function App() {
         const nextDif = nextEmaFast - nextEmaSlow;
         const nextDea = nextDif * alphaSig + lastMacd.dea * (1 - alphaSig);
         const nextHist = (nextDif - nextDea) * 2;
-        result.push({
+        const nextCandle = {
           time: lastCandle.time + interval.ms,
           open: lastCandle.close,
           high: Math.max(lastCandle.close, nextClose),
@@ -183,20 +185,45 @@ export default function App() {
           volume: 0,
           isNext: true,
           macd: { dif: nextDif, dea: nextDea, hist: nextHist, emaFast: nextEmaFast, emaSlow: nextEmaSlow }
-        });
+        };
+        result.push(nextCandle);
+
+        // 演化K：基于预测K的 MACD 再推一根
+        try {
+          const evoScale = Math.abs(nextHist) || (nextClose * 0.0005) || 0.1;
+          const evoTargetHist = nextHist + (evoScale * evolutionSimulatedPercent / 100);
+          const evoClose = reverseMACD(evoTargetHist, nextEmaFast, nextEmaSlow, nextDea, macdConfig);
+          const evoEmaFast = evoClose * alphaF + nextEmaFast * (1 - alphaF);
+          const evoEmaSlow = evoClose * alphaS + nextEmaSlow * (1 - alphaS);
+          const evoDif = evoEmaFast - evoEmaSlow;
+          const evoDea = evoDif * alphaSig + nextDea * (1 - alphaSig);
+          const evoHist = (evoDif - evoDea) * 2;
+          result.push({
+            time: lastCandle.time + interval.ms * 2,
+            open: nextClose,
+            high: Math.max(nextClose, evoClose),
+            low: Math.min(nextClose, evoClose),
+            close: evoClose,
+            volume: 0,
+            isEvolution: true,
+            macd: { dif: evoDif, dea: evoDea, hist: evoHist, emaFast: evoEmaFast, emaSlow: evoEmaSlow }
+          });
+        } catch (_) {}
       } catch (_) {
         // 反推失败时不添加预测 K 线
       }
     }
 
     return result;
-  }, [rawKlines, macdConfig, simulatedPercent, nextSimulatedPercent, baseHist, configError]);
+  }, [rawKlines, macdConfig, simulatedPercent, nextSimulatedPercent, evolutionSimulatedPercent, baseHist, configError]);
 
-  const lastReal = chartData.findLast(d => !d.isNext);
+  const lastReal = chartData.findLast(d => !d.isNext && !d.isEvolution);
   const nextCandle = chartData.findLast(d => d.isNext);
+  const evoCandle = chartData.findLast(d => d.isEvolution);
   const currentClose = lastReal?.close ?? 0;
   const currentMacdHist = lastReal?.macd?.hist ?? 0;
   const nextClose = nextCandle?.close ?? 0;
+  const evoClose = evoCandle?.close ?? 0;
   const displayError = error || configError;
 
   return (
@@ -250,21 +277,19 @@ export default function App() {
         {/* Left Panel: Controls */}
         <div className="lg:col-span-1 space-y-6">
           {/* MACD Config */}
-          <section className="bg-[#161a1e] border border-[#2b2f36] rounded-2xl p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold uppercase tracking-wider text-[#848e9c] flex items-center">
-                <Settings className="w-4 h-4 mr-2" />
-                MACD Config
-              </h2>
+          <section className="bg-[#161a1e] border border-[#2b2f36] rounded-2xl p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Settings className="w-3.5 h-3.5 text-[#848e9c]" />
+              <span className="text-xs font-semibold uppercase tracking-wider text-[#848e9c]">MACD</span>
             </div>
-            <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-2">
               {[
-                { label: 'Fast Period', key: 'fast', min: 1 },
-                { label: 'Slow Period', key: 'slow', min: 1 },
-                { label: 'Signal Period', key: 'signal', min: 2 }
+                { label: 'Fast', key: 'fast', min: 1 },
+                { label: 'Slow', key: 'slow', min: 1 },
+                { label: 'Signal', key: 'signal', min: 2 }
               ].map((item) => (
-                <div key={item.key} className="space-y-1.5">
-                  <label className="text-xs text-[#848e9c]">{item.label}</label>
+                <div key={item.key} className="space-y-1">
+                  <label className="text-[10px] text-[#848e9c]">{item.label}</label>
                   <input
                     type="number"
                     min={item.min}
@@ -276,7 +301,7 @@ export default function App() {
                       const clamped = Math.max(item.min, parsed);
                       setMacdConfig({ ...macdConfig, [item.key]: clamped });
                     }}
-                    className="w-full bg-[#1e2329] border border-[#2b2f36] rounded-lg py-2 px-3 text-sm focus:outline-none focus:border-emerald-500"
+                    className="w-full bg-[#1e2329] border border-[#2b2f36] rounded-lg py-1.5 px-2 text-xs text-center focus:outline-none focus:border-emerald-500"
                   />
                 </div>
               ))}
@@ -291,7 +316,7 @@ export default function App() {
                 Simulation
               </h2>
               <button
-                onClick={() => { setSimulatedPercent(0); setNextSimulatedPercent(0); }}
+                onClick={() => { setSimulatedPercent(0); setNextSimulatedPercent(0); setEvolutionSimulatedPercent(0); }}
                 className="text-xs text-emerald-500 hover:underline"
               >
                 Reset
@@ -347,6 +372,33 @@ export default function App() {
                   <span className="text-[#848e9c]">Implied Close</span>
                   <span className="font-mono font-bold text-sky-400">
                     {nextClose > 0 ? nextClose.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="border-t border-[#2b2f36]" />
+
+              {/* 演化 K 滑条 */}
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs font-mono">
+                  <span className="text-[#848e9c]">演化 K · Hist 变化</span>
+                  <span className={evolutionSimulatedPercent >= 0 ? 'text-violet-400' : 'text-red-500'}>
+                    {evolutionSimulatedPercent > 0 ? '+' : ''}{evolutionSimulatedPercent}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="-100"
+                  max="100"
+                  step="1"
+                  value={evolutionSimulatedPercent}
+                  onChange={(e) => setEvolutionSimulatedPercent(parseInt(e.target.value))}
+                  className="w-full accent-violet-400 cursor-pointer"
+                />
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-[#848e9c]">Implied Close</span>
+                  <span className="font-mono font-bold text-violet-400">
+                    {evoClose > 0 ? evoClose.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--'}
                   </span>
                 </div>
               </div>
