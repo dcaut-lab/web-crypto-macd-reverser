@@ -91,8 +91,11 @@ const CandlestickChart: React.FC<Props> = ({ data, width, height }) => {
       .attr('y', (d: ChartData) => yPrice(Math.max(d.open, d.close)))
       .attr('width', x.bandwidth())
       .attr('height', (d: ChartData) => Math.max(1, Math.abs(yPrice(d.open) - yPrice(d.close))))
-      .attr('fill', (d: ChartData) => d.close >= d.open ? '#00b07b' : '#ff3b30')
-      .attr('opacity', (d: ChartData) => d.isSimulated ? 0.6 : 1);
+      .attr('fill', (d: ChartData) => d.isNext ? 'none' : (d.close >= d.open ? '#00b07b' : '#ff3b30'))
+      .attr('stroke', (d: ChartData) => d.isNext ? (d.close >= d.open ? '#00b07b' : '#ff3b30') : 'none')
+      .attr('stroke-width', (d: ChartData) => d.isNext ? 1.5 : 0)
+      .attr('stroke-dasharray', (d: ChartData) => d.isNext ? '4,2' : 'none')
+      .attr('opacity', (d: ChartData) => d.isNext ? 0.5 : (d.isSimulated ? 0.6 : 1));
 
     // MACD Histogram
     g.selectAll<SVGRectElement, ChartData>('.macd-bar')
@@ -103,8 +106,14 @@ const CandlestickChart: React.FC<Props> = ({ data, width, height }) => {
       .attr('y', (d: ChartData) => d.macd ? (d.macd.hist >= 0 ? yMacd(d.macd.hist) : yMacd(0)) : 0)
       .attr('width', x.bandwidth())
       .attr('height', (d: ChartData) => d.macd ? Math.abs(yMacd(d.macd.hist) - yMacd(0)) : 0)
-      .attr('fill', (d: ChartData) => d.macd && d.macd.hist >= 0 ? '#00b07b' : '#ff3b30')
-      .attr('opacity', 0.5);
+      .attr('fill', (d: ChartData, i: number) => {
+        if (!d.macd) return '#848e9c';
+        const prev = data[i - 1]?.macd;
+        const shrinking = prev ? Math.abs(d.macd.hist) < Math.abs(prev.hist) : false;
+        if (d.macd.hist >= 0) return shrinking ? '#00b07b55' : '#00b07b';
+        else return shrinking ? '#ff3b3055' : '#ff3b30';
+      })
+      .attr('opacity', 1);
 
     // MACD Lines
     const lineDif = d3.line<ChartData>()
@@ -186,7 +195,7 @@ const CandlestickChart: React.FC<Props> = ({ data, width, height }) => {
         const dateStr = `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
         
         let tooltipHtml = `
-          <div style="color: #848e9c; margin-bottom: 4px;">${dateStr}</div>
+          <div style="color: #848e9c; margin-bottom: 4px;">${dateStr}${d.isNext ? ' <span style="color:#f0b90b">[预测]</span>' : ''}</div>
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
             <div>O: <span style="color: #fff">${d.open.toFixed(2)}</span></div>
             <div>H: <span style="color: #fff">${d.high.toFixed(2)}</span></div>

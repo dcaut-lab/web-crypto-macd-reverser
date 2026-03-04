@@ -18,6 +18,7 @@ export interface MACDResult {
 export interface ChartData extends KLine {
   macd?: MACDResult;
   isSimulated?: boolean;
+  isNext?: boolean;
 }
 
 export interface MACDConfig {

@@ -13,6 +13,16 @@ import CandlestickChart from './components/CandlestickChart';
 const DEFAULT_SYMBOL = 'ETHUSDT';
 const START_TIME = 1735689600000; // 2025-01-01
 
+const INTERVALS = [
+  { label: '15m', value: '15m', ms: 15 * 60 * 1000,          limit: 96  },  // 1天
+  { label: '30m', value: '30m', ms: 30 * 60 * 1000,          limit: 96  },  // 2天
+  { label: '1H',  value: '1h',  ms: 60 * 60 * 1000,          limit: 120 },  // 5天
+  { label: '4H',  value: '4h',  ms: 4 * 60 * 60 * 1000,      limit: 120 },  // 20天
+  { label: '1D',  value: '1d',  ms: 24 * 60 * 60 * 1000,     limit: 120 },  // 4个月
+  { label: '1W',  value: '1w',  ms: 7 * 24 * 60 * 60 * 1000, limit: 60  },  // 约1年
+  { label: '1M',  value: '1M',  ms: 30 * 24 * 60 * 60 * 1000,limit: 100 },
+];
+
 function validateMacdConfig(config: MACDConfig): string | null {
   const { fast, slow, signal } = config;
   if (!Number.isInteger(fast) || fast <= 0) return 'Fast period must be a positive integer.';
@@ -25,6 +35,7 @@ function validateMacdConfig(config: MACDConfig): string | null {
 export default function App() {
   const [symbol, setSymbol] = useState(DEFAULT_SYMBOL);
   const [inputSymbol, setInputSymbol] = useState(DEFAULT_SYMBOL);
+  const [interval, setInterval] = useState(INTERVALS[5]); // 默认 1W
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rawKlines, setRawKlines] = useState<KLine[]>([]);
@@ -36,15 +47,16 @@ export default function App() {
   });
 
   const [simulatedPercent, setSimulatedPercent] = useState(0);
+  const [nextSimulatedPercent, setNextSimulatedPercent] = useState(0);
   const configError = useMemo(() => validateMacdConfig(macdConfig), [macdConfig]);
 
   // Fetch data
-  const fetchData = async (targetSymbol: string) => {
+  const fetchData = async (targetSymbol: string, targetInterval = interval) => {
     setLoading(true);
     setError(null);
     try {
       const response = await fetch(
-        `https://api.binance.com/api/v3/klines?symbol=${targetSymbol.toUpperCase()}&interval=1w&startTime=${START_TIME}`
+        `https://api.binance.com/api/v3/klines?symbol=${targetSymbol.toUpperCase()}&interval=${targetInterval.value}&limit=${targetInterval.limit}`
       );
       if (!response.ok) throw new Error('Failed to fetch data from Binance');
       
@@ -71,6 +83,10 @@ export default function App() {
     fetchData(DEFAULT_SYMBOL);
   }, []);
 
+  useEffect(() => {
+    fetchData(symbol, interval);
+  }, [interval]);
+
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (inputSymbol) fetchData(inputSymbol);
@@ -87,6 +103,7 @@ export default function App() {
   // Reset simulation when symbol or config changes
   useEffect(() => {
     setSimulatedPercent(0);
+    setNextSimulatedPercent(0);
   }, [baseHist]);
 
   // Process data with MACD
@@ -130,14 +147,56 @@ export default function App() {
     const prices = dataToProcess.map(d => d.close);
     const macdResults = calculateMACD(prices, macdConfig);
 
-    return dataToProcess.map((d, i) => ({
+    const result: ChartData[] = dataToProcess.map((d, i) => ({
       ...d,
       macd: macdResults[i]
     }));
-  }, [rawKlines, macdConfig, simulatedPercent, baseHist, configError]);
 
-  const currentClose = chartData.length > 0 ? chartData[chartData.length - 1].close : 0;
-  const currentMacdHist = chartData.length > 0 ? chartData[chartData.length - 1].macd?.hist || 0 : 0;
+    // 预测下一根 K 线
+    const lastMacd = macdResults[macdResults.length - 1];
+    const lastCandle = dataToProcess[dataToProcess.length - 1];
+    if (lastMacd && lastCandle) {
+      try {
+        const nextScale = Math.abs(lastMacd.hist) || (lastCandle.close * 0.0005) || 0.1;
+        const nextTargetHist = lastMacd.hist + (nextScale * nextSimulatedPercent / 100);
+        const nextClose = reverseMACD(
+          nextTargetHist,
+          lastMacd.emaFast,
+          lastMacd.emaSlow,
+          lastMacd.dea,
+          macdConfig
+        );
+        const alphaF = 2 / (macdConfig.fast + 1);
+        const alphaS = 2 / (macdConfig.slow + 1);
+        const alphaSig = 2 / (macdConfig.signal + 1);
+        const nextEmaFast = nextClose * alphaF + lastMacd.emaFast * (1 - alphaF);
+        const nextEmaSlow = nextClose * alphaS + lastMacd.emaSlow * (1 - alphaS);
+        const nextDif = nextEmaFast - nextEmaSlow;
+        const nextDea = nextDif * alphaSig + lastMacd.dea * (1 - alphaSig);
+        const nextHist = (nextDif - nextDea) * 2;
+        result.push({
+          time: lastCandle.time + interval.ms,
+          open: lastCandle.close,
+          high: Math.max(lastCandle.close, nextClose),
+          low: Math.min(lastCandle.close, nextClose),
+          close: nextClose,
+          volume: 0,
+          isNext: true,
+          macd: { dif: nextDif, dea: nextDea, hist: nextHist, emaFast: nextEmaFast, emaSlow: nextEmaSlow }
+        });
+      } catch (_) {
+        // 反推失败时不添加预测 K 线
+      }
+    }
+
+    return result;
+  }, [rawKlines, macdConfig, simulatedPercent, nextSimulatedPercent, baseHist, configError]);
+
+  const lastReal = chartData.findLast(d => !d.isNext);
+  const nextCandle = chartData.findLast(d => d.isNext);
+  const currentClose = lastReal?.close ?? 0;
+  const currentMacdHist = lastReal?.macd?.hist ?? 0;
+  const nextClose = nextCandle?.close ?? 0;
   const displayError = error || configError;
 
   return (
@@ -154,16 +213,36 @@ export default function App() {
           </div>
         </div>
 
-        <form onSubmit={handleSearch} className="relative group">
-          <input
-            type="text"
-            value={inputSymbol}
-            onChange={(e) => setInputSymbol(e.target.value)}
-            placeholder="Search Symbol (e.g. BTCUSDT)"
-            className="w-full md:w-64 bg-[#1e2329] border border-[#2b2f36] rounded-xl py-2.5 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all"
-          />
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#848e9c] group-focus-within:text-emerald-500 transition-colors" />
-        </form>
+        <div className="flex items-center gap-3">
+          {/* 周期切换 */}
+          <div className="flex items-center bg-[#1e2329] border border-[#2b2f36] rounded-xl overflow-hidden">
+            {INTERVALS.map(iv => (
+              <button
+                key={iv.value}
+                onClick={() => setInterval(iv)}
+                className={`px-3 py-2 text-xs font-medium transition-colors ${
+                  interval.value === iv.value
+                    ? 'bg-emerald-500 text-white'
+                    : 'text-[#848e9c] hover:text-white'
+                }`}
+              >
+                {iv.label}
+              </button>
+            ))}
+          </div>
+
+          {/* 交易对搜索 */}
+          <form onSubmit={handleSearch} className="relative group">
+            <input
+              type="text"
+              value={inputSymbol}
+              onChange={(e) => setInputSymbol(e.target.value)}
+              placeholder="Search Symbol (e.g. BTCUSDT)"
+              className="w-full md:w-64 bg-[#1e2329] border border-[#2b2f36] rounded-xl py-2.5 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all"
+            />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#848e9c] group-focus-within:text-emerald-500 transition-colors" />
+          </form>
+        </div>
       </header>
 
       {/* Main Content */}
@@ -211,48 +290,72 @@ export default function App() {
                 <TrendingUp className="w-4 h-4 mr-2" />
                 Simulation
               </h2>
-              <button 
-                onClick={() => setSimulatedPercent(0)}
+              <button
+                onClick={() => { setSimulatedPercent(0); setNextSimulatedPercent(0); }}
                 className="text-xs text-emerald-500 hover:underline"
               >
                 Reset
               </button>
             </div>
-            
+
             <div className="space-y-4">
-              <div className="flex justify-between text-xs font-mono">
-                <span className="text-[#848e9c]">Target Change</span>
-                <span className={simulatedPercent >= 0 ? 'text-emerald-500' : 'text-red-500'}>
-                  {simulatedPercent > 0 ? '+' : ''}{simulatedPercent}%
-                </span>
-              </div>
-              <input
-                type="range"
-                min="-100"
-                max="100"
-                step="1"
-                value={simulatedPercent}
-                onChange={(e) => setSimulatedPercent(parseInt(e.target.value))}
-                className="w-full accent-emerald-500 cursor-pointer"
-              />
-              
-              <div className="pt-4 border-t border-[#2b2f36] space-y-3">
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-[#848e9c]">Target MACD Hist</span>
-                  <span className="font-mono text-white">{currentMacdHist.toFixed(4)}</span>
+              {/* 当前 K 线滑条 */}
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs font-mono">
+                  <span className="text-[#848e9c]">当前 K · Hist 变化</span>
+                  <span className={simulatedPercent >= 0 ? 'text-emerald-500' : 'text-red-500'}>
+                    {simulatedPercent > 0 ? '+' : ''}{simulatedPercent}%
+                  </span>
                 </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-[#848e9c]">Implied Close</span>
-                  <span className="text-lg font-bold font-mono text-white">
+                <input
+                  type="range"
+                  min="-100"
+                  max="100"
+                  step="1"
+                  value={simulatedPercent}
+                  onChange={(e) => setSimulatedPercent(parseInt(e.target.value))}
+                  className="w-full accent-emerald-500 cursor-pointer"
+                />
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-[#848e9c]">Implied Close</span>
+                  <span className="font-mono font-bold text-white">
                     {currentClose.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
-                <div className="p-3 bg-emerald-500/5 rounded-xl border border-emerald-500/10 flex items-start space-x-2">
-                  <Info className="w-4 h-4 text-emerald-500 mt-0.5" />
-                  <p className="text-[11px] text-[#848e9c] leading-relaxed">
-                    Adjust the slider to change the MACD histogram. 0% represents the current real value.
-                  </p>
+              </div>
+
+              <div className="border-t border-[#2b2f36]" />
+
+              {/* 预测 K 线滑条 */}
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs font-mono">
+                  <span className="text-[#848e9c]">预测 K · Hist 变化</span>
+                  <span className={nextSimulatedPercent >= 0 ? 'text-emerald-500' : 'text-red-500'}>
+                    {nextSimulatedPercent > 0 ? '+' : ''}{nextSimulatedPercent}%
+                  </span>
                 </div>
+                <input
+                  type="range"
+                  min="-100"
+                  max="100"
+                  step="1"
+                  value={nextSimulatedPercent}
+                  onChange={(e) => setNextSimulatedPercent(parseInt(e.target.value))}
+                  className="w-full accent-sky-400 cursor-pointer"
+                />
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-[#848e9c]">Implied Close</span>
+                  <span className="font-mono font-bold text-sky-400">
+                    {nextClose > 0 ? nextClose.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-3 bg-emerald-500/5 rounded-xl border border-emerald-500/10 flex items-start space-x-2">
+                <Info className="w-4 h-4 text-emerald-500 mt-0.5" />
+                <p className="text-[11px] text-[#848e9c] leading-relaxed">
+                  0% = 维持当前 Hist 不变。正值伸长，负值缩短。
+                </p>
               </div>
             </div>
           </section>
@@ -263,7 +366,7 @@ export default function App() {
           <div className="flex items-center justify-between px-2">
             <div className="flex items-center space-x-4">
               <span className="text-lg font-bold">{symbol}</span>
-              <span className="text-xs px-2 py-0.5 bg-[#2b2f36] rounded text-[#848e9c]">1W</span>
+              <span className="text-xs px-2 py-0.5 bg-[#2b2f36] rounded text-[#848e9c]">{interval.label}</span>
             </div>
             {loading && <Loader2 className="w-4 h-4 animate-spin text-emerald-500" />}
           </div>
