@@ -64,6 +64,24 @@ export function calculateMACD(
  * DIF_t = EMA_fast_t - EMA_slow_t
  * EMA_t = Price_t * alpha + EMA_{t-1} * (1 - alpha)
  */
+export function calculateATR(klines: { high: number; low: number; close: number }[], period = 14): number[] {
+  const tr: number[] = [];
+  for (let i = 0; i < klines.length; i++) {
+    const { high, low } = klines[i];
+    const prevClose = i === 0 ? klines[i].close : klines[i - 1].close;
+    tr.push(Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose)));
+  }
+  const atr: number[] = [];
+  let sum = tr.slice(0, period).reduce((a, b) => a + b, 0);
+  atr.push(...new Array(period - 1).fill(NaN));
+  atr.push(sum / period);
+  for (let i = period; i < tr.length; i++) {
+    const val = (atr[atr.length - 1] * (period - 1) + tr[i]) / period;
+    atr.push(val);
+  }
+  return atr;
+}
+
 export function reverseMACD(
   targetHist: number,
   prevEmaFast: number,

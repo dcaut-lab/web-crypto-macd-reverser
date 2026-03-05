@@ -7,7 +7,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Search, Settings, TrendingUp, Info, AlertCircle, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ChartData, KLine, MACDConfig } from './types';
-import { calculateMACD, reverseMACD } from './utils/indicators';
+import { calculateMACD, reverseMACD, calculateATR } from './utils/indicators';
 import CandlestickChart from './components/CandlestickChart';
 
 const DEFAULT_SYMBOL = 'ETHUSDT';
@@ -57,7 +57,7 @@ export default function App() {
     setError(null);
     try {
       const response = await fetch(
-        `https://api.binance.com/api/v3/klines?symbol=${targetSymbol.toUpperCase()}&interval=${targetInterval.value}&limit=${targetInterval.limit}`
+        `https://fapi.binance.com/fapi/v1/klines?symbol=${targetSymbol.toUpperCase()}&interval=${targetInterval.value}&limit=${targetInterval.limit}`
       );
       if (!response.ok) throw new Error('Failed to fetch data from Binance');
       
@@ -154,6 +154,11 @@ export default function App() {
       macd: macdResults[i]
     }));
 
+    // 计算 ATR(14)，取最后一个有效值
+    const atrValues = calculateATR(dataToProcess);
+    const lastATR = [...atrValues].reverse().find(v => !isNaN(v)) || 0;
+    const halfATR = lastATR * 0.5;
+
     // 预测下一根 K 线
     const lastMacd = macdResults[macdResults.length - 1];
     const lastCandle = dataToProcess[dataToProcess.length - 1];
@@ -176,11 +181,12 @@ export default function App() {
         const nextDif = nextEmaFast - nextEmaSlow;
         const nextDea = nextDif * alphaSig + lastMacd.dea * (1 - alphaSig);
         const nextHist = (nextDif - nextDea) * 2;
+        const nextMid = (lastCandle.close + nextClose) / 2;
         const nextCandle = {
           time: lastCandle.time + interval.ms,
           open: lastCandle.close,
-          high: Math.max(lastCandle.close, nextClose),
-          low: Math.min(lastCandle.close, nextClose),
+          high: Math.max(lastCandle.close, nextClose, nextMid + halfATR),
+          low: Math.min(lastCandle.close, nextClose, nextMid - halfATR),
           close: nextClose,
           volume: 0,
           isNext: true,
@@ -198,11 +204,12 @@ export default function App() {
           const evoDif = evoEmaFast - evoEmaSlow;
           const evoDea = evoDif * alphaSig + nextDea * (1 - alphaSig);
           const evoHist = (evoDif - evoDea) * 2;
+          const evoMid = (nextClose + evoClose) / 2;
           result.push({
             time: lastCandle.time + interval.ms * 2,
             open: nextClose,
-            high: Math.max(nextClose, evoClose),
-            low: Math.min(nextClose, evoClose),
+            high: Math.max(nextClose, evoClose, evoMid + halfATR),
+            low: Math.min(nextClose, evoClose, evoMid - halfATR),
             close: evoClose,
             volume: 0,
             isEvolution: true,
@@ -445,7 +452,7 @@ export default function App() {
 
       {/* Footer */}
       <footer className="text-center py-4 text-[10px] text-[#848e9c] border-t border-[#2b2f36]">
-        Data provided by Binance Public API. Calculations are for simulation purposes only.
+        Data provided by Binance Futures API. Calculations are for simulation purposes only.
       </footer>
     </div>
   );
